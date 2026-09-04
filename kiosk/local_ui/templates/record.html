@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}GroundTruth — Record Complaint{% endblock %}
+
+{#
+  record.html
+  ============
+  Screen 2 of 3 in the resident complaint flow.
+
+  States (managed by Alpine.js `recorder()` component in app.js):
+    IDLE       — large mic button, prompt to tap and speak
+    RECORDING  — mic button pulses red, waveform animates, countdown ticks
+    STOPPED    — recording ended (manual stop or 90s timeout), awaiting pipeline
+    PROCESSING — pipeline running (ASR → Structure → Verify → Route)
+                 spinner + current stage label shown; HTMX POST in flight
+    ERROR      — pipeline returned an error; retry or back options shown
+
+  Transitions:
+    IDLE       → RECORDING : resident taps mic button
+    RECORDING  → STOPPED   : resident taps stop, OR countdown reaches 0
+    STOPPED    → PROCESSING: automatic — HTMX fires POST /v1/complaints/{session_id}/finalize
+    PROCESSING → DONE      : Kiosk Agent returns 200 with HX-Redirect → /confirmation/{ticket_id}
+    PROCESSING → ERROR     : Kiosk Agent returns error JSON; retry_allowed drives UI
+    ERROR      → IDLE      : resident taps "Try Again"
+
+  Audio capture uses the Web MediaRecorder API (available in Chromium kiosk mode).
+  PCM audio is sent as a multipart upload in the finalize POST body.
+  The 90-second cap is enforced both client-side (countdown) and server-side
+  (architecture.md §4.1: AsrInputTooLongError).
+#}
+
+{% block content %}
+<div
+  class="card"
+  id="record-card"
+  x-data="recorder('{{ session_id }}', '{{ language }}', {{ max_duration | default(90) }})"
+  x-init="init()"
+  role="region"
+  aria-labelledby="record-heading"
+>
+
+  <!-- ── IDLE / RECORDING state ───────────────────────── -->
+  <div x-show="state === 'IDLE' || state === 'RECORDING'" x-transition>
+
+    <!-- Heading (changes with state) -->
+    <h1
+      class="card__title text-center"
+      id="record-heading"
+      x-text="state === 'RECORDING'
+        ? '{{ lang_strings.listening | default('Listening...') }}'
+        : '{{ lang_strings.tap_to_speak | default('Tap to Speak') }}'"
+    ></h1>
+    <p
+      class="card__subtitle text-center"
+      x-text="state === 'RECORDING'
+        ? '{{ lang_strings.speak_clearly | default('Speak clearly about the problem') }}'
+        : '{{ lang_strings.describe_problem | default('Describe your complaint in your own words') }}'"
+    ></p>
+
+    <!-- Language badge -->
+    <div class="flex items-center justify-between mb-6">
+      <a
+        href="/"
+        class="btn btn--ghost"
+        style="min-height:44px;padding:var(--sp-2) var(--sp-4);font-size:var(--text-sm);"
+        aria-label="Go back to language selection"
+        x-show="state === 'IDLE'"
+      >
+        ← Back
+      </a>
+      <span class="badge badge--{{ language == 'hi' and 'water' or language == 'mr' and 'sanitation' or 'road' }}"
+            aria-label="Selected language: {{ language }}">
+        {{ {'hi':'हिन्दी', 'mr':'मराठी', 'ta':'தமிழ்'}.get(language, language) }}
+      </span>
+    </div>
+
+    <!-- Microphone button -->
+    <div class="flex flex-col items-center gap-8">
+      <button
+        id="mic-btn"
+        class="mic-btn"
+        :class="{ 'mic-btn--recording': state === 'RECORDING' }"
+        :aria-label="state === 'RECORDING' ? 'Stop recording' : 'Start recording'"
+        :aria-pressed="state === 'RECORDING'"
+        @click="toggleRecording()"
+        :disabled="state !== 'IDLE' && state !== 'RECORDING'"
+      >
+        <!-- Mic icon (IDLE) -->
+        <svg
+          x-show="state === 'IDLE'"
+          class="mic-btn__icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/>
+          <path d="M19 10a7 7 0 0 1-14 0"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8"  y1="23" x2="16" y2="23"/>
+        </svg>
+
+        <!-- Stop icon (RECORDING) -->
+        <svg
+          x-show="state === 'RECORDING'"
+          class="mic-btn__icon"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24" fill="currentColor"
+          aria-hidden="true"
+        >
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+        </svg>
+      </button>
+
+      <!-- Waveform visualiser (shown only while recording) -->
+      <div
+        class="waveform"
+        :class="{ 'waveform--active': state === 'RECORDING' }"
+        role="img"
+        :aria-label="state === 'RECORDING' ? 'Audio waveform — recording in progress' : 'Audio waveform — idle'"
+        aria-live="off"
+      >
+        <template x-for="(h, i) in waveHeights" :key="i">
+          <div
+            class="waveform__bar"
+            :style="`height: ${h}px`"
+            aria-hidden="true"
+          ></div>
+        </template>
+      </div>
+
+      <!-- Countdown timer (shown only while recording) -->
+      <div
+        x-show="state === 'RECORDING'"
+        x-transition
+        class="flex flex-col items-center gap-2"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <span
+          class="countdown"
+          :class="{
+            'countdown--warning':  remaining <= 30 && remaining > 10,
+            'countdown--critical': remaining <= 10
+          }"
+          :aria-label="`${remaining} seconds remaining`"
+          x-text="formatTime(remaining)"
+        ></span>
+        <span class="text-muted text-sm">seconds remaining</span>
+      </div>
+
+      <!-- Tap-to-start hint (IDLE only) -->
+      <p
+        x-show="state === 'IDLE'"
+        class="text-secondary text-sm text-center"
+        aria-hidden="true"
+      >
+        Tap the microphone to begin &nbsp;·&nbsp;
+        माइक पर टैप करें &nbsp;·&nbsp;
+        मायक्रोफोनवर टॅप करा
+      </p>
+    </div>
+    <!-- /mic area -->
+
+  </div>
+  <!-- /IDLE & RECORDING -->
+
+  <!-- ── PROCESSING state ──────────────────────────────── -->
+  <div
+    x-show="state === 'PROCESSING'"
+    x-transition
+    class="pipeline-state"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  >
+    <h1 class="card__title text-center" id="record-heading">Processing…</h1>
+
+    <div class="spinner" aria-hidden="true"></div>
+
+    <p class="pipeline-state__label" x-text="pipelineStage"></p>
+
+    <p class="text-muted text-sm text-center">
+      Please wait — this may take up to 90 seconds.
+    </p>
+
+    <!-- Hidden form submitted programmatically by Alpine when recording stops.
+         HTMX attributes are set dynamically so the form always has the correct session_id.
+         The audio blob is appended to FormData in app.js before submission. -->
+    <form
+      id="finalize-form"
+      :action="`/v1/complaints/${sessionId}/finalize`"
+      method="POST"
+      enctype="multipart/form-data"
+      hx-post=""
+      hx-target="#record-card"
+      hx-swap="outerHTML"
+      hx-encoding="multipart/form-data"
+      style="display:none;"
+      @htmx:response-error="onPipelineError($event)"
+      @htmx:before-request="pipelineStage = 'Transcribing speech…'"
+      @htmx:xhr:progress="onProgress($event)"
+    >
+      <input type="hidden" name="language" :value="language" />
+      <!-- audio_data field populated by Alpine before form submit -->
+    </form>
+  </div>
+  <!-- /PROCESSING -->
+
+  <!-- ── ERROR state ───────────────────────────────────── -->
+  <div
+    x-show="state === 'ERROR'"
+    x-transition
+    class="flex flex-col items-center gap-6"
+    role="alert"
+    aria-live="assertive"
+  >
+    <div style="
+      width:80px;height:80px;border-radius:9999px;
+      background:rgba(248,81,73,0.12);
+      border:2px solid rgba(248,81,73,0.4);
+      display:flex;align-items:center;justify-content:center;
+    ">
+      <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round"
+           style="color:var(--clr-status-crit);" aria-hidden="true">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    </div>
+
+    <div class="text-center">
+      <h1 class="card__title" id="record-heading">Something went wrong</h1>
+      <p class="card__subtitle" x-text="errorMsg"></p>
+    </div>
+
+    <div class="flex gap-4 w-full">
+      <!-- Retry (if pipeline says retry_allowed) -->
+      <button
+        x-show="retryAllowed"
+        class="btn btn--primary"
+        style="flex:1;"
+        @click="resetToIdle()"
+        aria-label="Try recording again"
+      >
+        Try Again
+      </button>
+
+      <!-- Always show Back to home -->
+      <a
+        href="/"
+        class="btn btn--ghost"
+        style="flex:1;"
+        aria-label="Return to language selection"
+      >
+        ← Start Over
+      </a>
+    </div>
+  </div>
+  <!-- /ERROR -->
+
+</div>
+{# /card #}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+  /**
+   * Inline language strings for the record screen.
+   * Alpine reads these from the component; the server passes the correct
+   * strings via Jinja2 context when multilingual prompt templates are implemented.
+   * For the MVP, English labels are used throughout (the key UX for non-literate
+   * users is the native-script language button they already tapped).
+   */
+  window.KIOSK_LANG = "{{ language }}";
+  window.KIOSK_SESSION_ID = "{{ session_id }}";
+  window.KIOSK_MAX_DURATION = {{ max_duration | default(90) }};
+</script>
+{% endblock %}

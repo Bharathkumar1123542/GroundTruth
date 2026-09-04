@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}GroundTruth — Select Language{% endblock %}
+
+{#
+  language_select.html
+  =====================
+  Screen 1 of 3 in the resident-facing complaint flow.
+  Renders three large language-select buttons (Hindi, Marathi, Tamil).
+
+  On tap:
+    1. Alpine.js sets `selecting = true` (shows a loading overlay on the button)
+    2. HTMX posts to POST /v1/complaints/record with { language: code }
+    3. On success (HTTP 200), HTMX performs a full-page redirect to /record/{session_id}
+       by following the HX-Redirect response header set by the Kiosk Agent.
+    4. On error, an inline error message replaces the #lang-error zone.
+
+  No JavaScript form submission — HTMX handles the POST declaratively.
+  Alpine.js only manages local UI state (button loading, error display).
+#}
+
+{% block content %}
+<div
+  class="card card--wide"
+  x-data="languageSelect()"
+  role="region"
+  aria-labelledby="lang-heading"
+>
+
+  <!-- Heading -->
+  <h1 class="card__title text-center" id="lang-heading">
+    अपनी भाषा चुनें
+    <span class="sr-only"> / आपली भाषा निवडा / உங்கள் மொழியைத் தேர்வு செய்யவும்</span>
+  </h1>
+  <p class="card__subtitle text-center">
+    Select your language to begin recording your complaint.
+  </p>
+
+  <!-- Error zone — replaced by HTMX on POST failure -->
+  <div
+    id="lang-error"
+    role="alert"
+    aria-live="assertive"
+    x-show="errorMsg"
+    x-transition
+    class="flex items-center gap-4 mb-6"
+    style="
+      background: rgba(248,81,73,0.10);
+      border: 1px solid rgba(248,81,73,0.35);
+      border-radius: var(--radius-md);
+      padding: var(--sp-4);
+      display: none;
+    "
+  >
+    <!-- Icon -->
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+         stroke-linejoin="round" style="color:var(--clr-status-crit);flex-shrink:0;"
+         aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    <span class="text-crit text-sm" x-text="errorMsg"></span>
+  </div>
+
+  <!-- Language grid — 3 large touch-target buttons -->
+  <div class="lang-grid" role="list" aria-label="Available languages">
+
+    <!-- Hindi -->
+    <button
+      id="lang-btn-hi"
+      class="lang-btn"
+      role="listitem"
+      aria-label="Hindi — हिन्दी"
+      :aria-busy="selecting === 'hi'"
+      :disabled="selecting !== null"
+      hx-post="/v1/complaints/record"
+      hx-vals='{"language": "hi"}'
+      hx-target="#lang-error"
+      hx-swap="outerHTML"
+      hx-indicator="#lang-btn-hi .lang-btn__spinner"
+      @click="selecting = 'hi'"
+      @htmx:response-error.window="onError($event)"
+      @htmx:before-request.window="$el.closest('[hx-post]') === $el ? null : null"
+    >
+      <!-- Native script (large, touch-visible) -->
+      <span class="lang-btn__script" aria-hidden="true">हिन्दी</span>
+      <span class="lang-btn__name">Hindi</span>
+
+      <!-- Inline spinner shown while HTMX request is in-flight -->
+      <span
+        class="lang-btn__spinner htmx-indicator"
+        style="position:absolute;bottom:var(--sp-3);"
+        aria-hidden="true"
+      >
+        <span class="spinner" style="width:24px;height:24px;border-width:3px;"></span>
+      </span>
+    </button>
+
+    <!-- Marathi -->
+    <button
+      id="lang-btn-mr"
+      class="lang-btn"
+      role="listitem"
+      aria-label="Marathi — मराठी"
+      :aria-busy="selecting === 'mr'"
+      :disabled="selecting !== null"
+      hx-post="/v1/complaints/record"
+      hx-vals='{"language": "mr"}'
+      hx-target="#lang-error"
+      hx-swap="outerHTML"
+      hx-indicator="#lang-btn-mr .lang-btn__spinner"
+      @click="selecting = 'mr'"
+      @htmx:response-error.window="onError($event)"
+    >
+      <span class="lang-btn__script" aria-hidden="true">मराठी</span>
+      <span class="lang-btn__name">Marathi</span>
+      <span
+        class="lang-btn__spinner htmx-indicator"
+        style="position:absolute;bottom:var(--sp-3);"
+        aria-hidden="true"
+      >
+        <span class="spinner" style="width:24px;height:24px;border-width:3px;"></span>
+      </span>
+    </button>
+
+    <!-- Tamil -->
+    <button
+      id="lang-btn-ta"
+      class="lang-btn"
+      role="listitem"
+      aria-label="Tamil — தமிழ்"
+      :aria-busy="selecting === 'ta'"
+      :disabled="selecting !== null"
+      hx-post="/v1/complaints/record"
+      hx-vals='{"language": "ta"}'
+      hx-target="#lang-error"
+      hx-swap="outerHTML"
+      hx-indicator="#lang-btn-ta .lang-btn__spinner"
+      @click="selecting = 'ta'"
+      @htmx:response-error.window="onError($event)"
+    >
+      <span class="lang-btn__script" aria-hidden="true">தமிழ்</span>
+      <span class="lang-btn__name">Tamil</span>
+      <span
+        class="lang-btn__spinner htmx-indicator"
+        style="position:absolute;bottom:var(--sp-3);"
+        aria-hidden="true"
+      >
+        <span class="spinner" style="width:24px;height:24px;border-width:3px;"></span>
+      </span>
+    </button>
+
+  </div>
+  <!-- /lang-grid -->
+
+  <!-- Instructional footer inside card -->
+  <p class="text-muted text-sm text-center mt-6" aria-hidden="true">
+    Tap your language to start &nbsp;·&nbsp; बोलना शुरू करने के लिए टैप करें &nbsp;·&nbsp; बोलण्यासाठी टॅप करा
+  </p>
+
+</div>
+{# /card #}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+  /**
+   * languageSelect() — Alpine.js component for the language select screen.
+   *
+   * State:
+   *   selecting  {string|null} — language code currently being submitted, or null
+   *   errorMsg   {string}      — error message to display, or empty string
+   *
+   * The HTMX post on each button handles the actual network call.
+   * On success, the Kiosk Agent returns HTTP 200 with an HX-Redirect header
+   * pointing to /record/{session_id}; HTMX follows it automatically.
+   * On failure, the response body (an ErrorResponse JSON or HTML fragment)
+   * is swapped into #lang-error and Alpine renders the errorMsg.
+   */
+  function languageSelect() {
+    return {
+      selecting: null,
+      errorMsg: '',
+
+      onError(event) {
+        this.selecting = null;
+        // HTMX provides the xhr object in event.detail.xhr
+        const xhr = event.detail && event.detail.xhr;
+        if (xhr) {
+          try {
+            const body = JSON.parse(xhr.responseText);
+            this.errorMsg = body.message || 'Something went wrong. Please try again.';
+          } catch {
+            this.errorMsg = 'Could not connect to the kiosk. Please try again.';
+          }
+        } else {
+          this.errorMsg = 'An unexpected error occurred. Please try again.';
+        }
+      },
+    };
+  }
+</script>
+{% endblock %}
