@@ -1,0 +1,93 @@
+[tool.poetry]
+name = "groundtruth-kiosk"
+version = "0.1.0"
+description = "GroundTruth offline-first civic complaint kiosk — on-device pipeline"
+authors = ["Bharath"]
+readme = "README.md"
+packages = [
+    { include = "kiosk_agent" },
+    { include = "sync_daemon" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+# Web framework & serving (architecture.md §7.2)
+fastapi = "^0.111.0"
+uvicorn = { version = "^0.29.0", extras = ["standard"] }
+jinja2 = "^3.1.4"
+python-multipart = "^0.0.9"
+
+# Data validation (implementation.md §7)
+pydantic = "^2.7.0"
+pydantic-settings = "^2.2.1"
+
+# Database (architecture.md §ADR-003)
+sqlalchemy = "^2.0.30"
+# sqlcipher3-binary provides SQLCipher-backed SQLite for data-at-rest encryption
+# (architecture.md §8). Falls back gracefully to plain SQLite in dev/CI via env flag.
+sqlcipher3-binary = "^0.5.3"
+
+# ASR — whisper.cpp Python bindings (architecture.md §4.1)
+# Pin to a known-good version; update via `poetry update pywhispercpp` after testing.
+pywhispercpp = "^1.2.0"
+
+# Structuring LLM — llama.cpp Python bindings (architecture.md §4.2)
+# cmake_args for GPU offload are set per-device via LLAMA_CUDA / LLAMA_METAL env vars
+# at build time; default CPU-only is sufficient for CI and laptop demo.
+llama-cpp-python = "^0.2.72"
+
+# Change-detection inference (architecture.md §4.4)
+onnxruntime = "^1.18.0"
+numpy = "^1.26.4"
+pillow = "^10.3.0"
+
+# Geo utilities — bounding-box / geofence helpers (architecture.md §4.3)
+shapely = "^2.0.4"
+
+# HTTP client for Sync Daemon reachability checks & push (architecture.md §4.7)
+httpx = { version = "^0.27.0", extras = ["http2"] }
+
+# Audio capture for the recording pipeline
+pyaudio = "^0.2.14"
+
+# Fuzzy string matching for location_hint → landmark resolution (architecture.md §4.3)
+rapidfuzz = "^3.9.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-asyncio = "^0.23.6"
+pytest-cov = "^5.0.0"
+httpx = { version = "^0.27.0", extras = ["http2"] }   # also needed for TestClient
+ruff = "^0.4.4"
+mypy = "^1.10.0"
+
+[tool.poetry.scripts]
+kiosk-agent  = "kiosk_agent.main:start"
+sync-daemon  = "sync_daemon.main:start"
+
+# ---------------------------------------------------------------------------
+# Tool configuration
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

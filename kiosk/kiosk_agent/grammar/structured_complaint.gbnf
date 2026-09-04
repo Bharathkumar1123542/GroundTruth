@@ -1,0 +1,131 @@
+# structured_complaint.gbnf
+# ==========================
+# GBNF (GGML BNF) grammar for llama.cpp constrained decoding.
+#
+# Purpose: make the Structuring Engine physically incapable of emitting
+# a token sequence that violates the Structured Complaint schema defined
+# in architecture.md §6.1.  Downstream components (Verification Engine,
+# Ticket Router) can rely on receiving schema-conformant JSON without
+# any post-hoc validation-and-retry loop (ADR-002).
+#
+# Schema enforced (architecture.md §6.1):
+#   {
+#     "category":             "ROAD|WATER|ELECTRICITY|SANITATION|STREETLIGHT|OTHER",
+#     "subcategory":          string, max 64 chars,
+#     "description":          string, max 280 chars,
+#     "location_hint":        string,
+#     "reported_asset_type":  string,
+#     "urgency_keywords":     array of 0–5 strings,
+#     "structuring_confidence": float 0.0–1.0
+#   }
+#
+# GBNF reference: https://github.com/ggerganov/llama.cpp/blob/master/grammars/README.md
+#
+# Constraints implemented:
+#   [C1] category is restricted to exactly the 6 enumerated values
+#   [C2] subcategory and description are printable strings within
+#        their max-length limits (64 and 280 chars respectively)
+#   [C3] structuring_confidence is a decimal in [0.00, 1.00]
+#   [C4] urgency_keywords is a JSON array with 0–5 string elements
+#   [C5] The top-level value is a single JSON object with exactly
+#        the 7 required keys in the order listed above
+#
+# Notes on length limits:
+#   True per-character length limits (64, 280) cannot be expressed in
+#   GBNF without a counting production that would be impractically large.
+#   We therefore use a char-class-based rule (printable-str-*) that
+#   allows any number of printable characters, and enforce the length
+#   limit at the application level in structuring_engine.py via the
+#   Pydantic StructuredComplaint validator (belt-and-suspenders, as
+#   the model is fine-tuned to respect these limits in practice).
+
+# ---------------------------------------------------------------------------
+# Root
+# ---------------------------------------------------------------------------
+
+root ::= "{" ws
+  "\"category\""             ws ":" ws category             "," ws
+  "\"subcategory\""          ws ":" ws short-string          "," ws
+  "\"description\""          ws ":" ws long-string           "," ws
+  "\"location_hint\""        ws ":" ws printable-string      "," ws
+  "\"reported_asset_type\""  ws ":" ws printable-string      "," ws
+  "\"urgency_keywords\""     ws ":" ws keyword-array         "," ws
+  "\"structuring_confidence\"" ws ":" ws confidence
+  ws "}"
+
+# ---------------------------------------------------------------------------
+# [C1] Category — exactly the 6 enumerated values (architecture.md §4.2)
+# ---------------------------------------------------------------------------
+
+category ::= "\"ROAD\""
+           | "\"WATER\""
+           | "\"ELECTRICITY\""
+           | "\"SANITATION\""
+           | "\"STREETLIGHT\""
+           | "\"OTHER\""
+
+# ---------------------------------------------------------------------------
+# [C3] Confidence — decimal in [0.00 … 1.00]
+#
+# Valid forms: 0, 0.0, 0.00, 0.75, 1, 1.0, 1.00
+# Invalid:     1.01, -0.1, 2.5  (these token sequences are unreachable)
+# ---------------------------------------------------------------------------
+
+confidence ::= "1" ( "." "0"+ )?
+             | "0" ( "." [0-9]+ )?
+
+# ---------------------------------------------------------------------------
+# [C4] urgency_keywords — JSON array, 0 to 5 string elements
+#
+# Expressed as: [] | [s] | [s,s] | [s,s,s] | [s,s,s,s] | [s,s,s,s,s]
+# Avoids a recursive rule that could generate arbitrarily long arrays.
+# ---------------------------------------------------------------------------
+
+keyword-array ::= "[]"
+               | "[" ws keyword-item ws "]"
+               | "[" ws keyword-item ws "," ws keyword-item ws "]"
+               | "[" ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "]"
+               | "[" ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "]"
+               | "[" ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "," ws keyword-item ws "]"
+
+keyword-item ::= "\"" printable-chars "\""
+
+# ---------------------------------------------------------------------------
+# String productions
+#
+# short-string  : for subcategory (≤64 chars intent — enforced in Python)
+# long-string   : for description (≤280 chars intent — enforced in Python)
+# printable-string: for location_hint and reported_asset_type (no length limit)
+#
+# All three wrap printable-chars between JSON double-quote delimiters.
+# The grammar itself does not count characters; the fine-tuned model and
+# the downstream Pydantic validator together enforce the length limits.
+# ---------------------------------------------------------------------------
+
+short-string     ::= "\"" printable-chars "\""
+long-string      ::= "\"" printable-chars "\""
+printable-string ::= "\"" printable-chars "\""
+
+# Printable characters: space through ~ (0x20–0x7E) plus common Unicode
+# ranges used in Hindi (Devanagari), Marathi (Devanagari), and Tamil scripts.
+#
+# Devanagari block:  U+0900–U+097F  (Hindi, Marathi)
+# Tamil block:       U+0B80–U+0BFF
+# Common punctuation: included in 0x20–0x7E
+#
+# Escape sequences: \\, \", \n, \t are permitted inside strings.
+#
+# Note: GBNF hex escapes use the \uXXXX notation below.
+
+printable-chars ::= printable-char*
+
+printable-char ::= [^\x00-\x1F"\\]           # printable ASCII excl. control, quote, backslash
+                 | "\\\"" | "\\\\" | "\\n" | "\\t" | "\\r"   # JSON escape sequences
+                 | [\u0900-\u097F]             # Devanagari (Hindi/Marathi)
+                 | [\u0B80-\u0BFF]             # Tamil
+
+# ---------------------------------------------------------------------------
+# Whitespace — optional spaces between JSON tokens
+# ---------------------------------------------------------------------------
+
+ws ::= [ \t\n]*

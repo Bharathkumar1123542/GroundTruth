@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!--
+  base.html — Kiosk Shell Layout
+  ================================
+  Jinja2 base template rendered by the Kiosk Agent's FastAPI app.
+  All screens (language_select, record, confirmation) extend this template.
+
+  Offline-capable: all assets (CSS, JS) are served from localhost static files.
+  No CDN links — the kiosk must function with network interface disabled.
+
+  Libraries loaded from static/:
+    - main.css      (our design system — Step 1.1)
+    - htmx.min.js   (HTMX — served locally, fetched once by fetch_models.sh)
+    - alpine.min.js (Alpine.js — served locally)
+    - app.js        (our Alpine components — Step 1.6)
+-->
+<html lang="{{ lang | default('en') }}" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <!--
+    user-scalable=no prevents accidental pinch-zoom on the touchscreen kiosk.
+    This is intentional for a locked-down kiosk UI; it would not be appropriate
+    for a general-purpose web app.
+  -->
+
+  <title>{% block title %}GroundTruth Kiosk{% endblock %}</title>
+
+  <!-- Meta: prevent browser from caching the kiosk shell across sessions -->
+  <meta http-equiv="Cache-Control" content="no-store" />
+
+  <!-- Design system — served from localhost (architecture.md §7.2) -->
+  <link rel="stylesheet" href="/static/main.css" />
+
+  {% block head_extra %}{% endblock %}
+</head>
+
+<body
+  x-data="kioskShell()"
+  x-init="init()"
+>
+
+<!-- =========================================================
+     KIOSK SHELL — Header
+     Status indicators update every 30s via HTMX polling.
+     Thresholds sourced from implementation.md §4.7:
+       storage: green <80%, yellow 80-95%, red >95%
+       sync age: green <1hr, yellow >6hr, red >24hr
+     ========================================================= -->
+<header class="kiosk-header" role="banner">
+
+  <div class="kiosk-header__logo" aria-label="GroundTruth Kiosk">
+    Ground<span>Truth</span>
+  </div>
+
+  <span class="kiosk-header__kiosk-id" aria-label="Kiosk ID">
+    {{ kiosk_id | default('DEV-KIOSK-001') }}
+  </span>
+
+  <!-- Status bar — polled from GET /v1/health every 30 seconds -->
+  <div
+    class="status-bar"
+    role="status"
+    aria-live="polite"
+    aria-label="System status"
+    id="status-bar"
+    hx-get="/v1/health/partial"
+    hx-trigger="load, every 30s"
+    hx-swap="outerHTML"
+    hx-target="#status-bar"
+  >
+    {# Rendered server-side on first load; HTMX replaces with /v1/health/partial #}
+    {% include "partials/status_bar.html" ignore missing %}
+    {# Fallback if partial template not yet rendered: #}
+    {% if not storage_status %}
+    <div class="status-indicator status-indicator--ok" aria-label="Storage status: OK">
+      <span class="status-indicator__dot"></span>
+      <span>Storage</span>
+    </div>
+    <div class="status-indicator status-indicator--ok" aria-label="Sync status: OK">
+      <span class="status-indicator__dot"></span>
+      <span>Sync</span>
+    </div>
+    {% endif %}
+  </div>
+
+</header>
+
+<!-- =========================================================
+     MAIN CONTENT AREA
+     Each child template fills this block.
+     ========================================================= -->
+<main class="kiosk-main" id="main-content" role="main">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- =========================================================
+     FOOTER
+     ========================================================= -->
+<footer class="kiosk-footer" role="contentinfo">
+  <span>GroundTruth &mdash; Civic Complaint Kiosk &mdash; Offline-First</span>
+</footer>
+
+<!-- =========================================================
+     SCRIPTS
+     Alpine.js MUST load before HTMX (defer order matters).
+     Both are served from localhost static/ — no CDN.
+     ========================================================= -->
+
+<!-- Alpine.js — loaded with defer to avoid blocking render -->
+<script defer src="/static/vendor/alpine.min.js"></script>
+
+<!-- HTMX — handles all form submissions and partial page updates -->
+<script src="/static/vendor/htmx.min.js"></script>
+
+<!-- Our Alpine components + HTMX config -->
+<script src="/static/app.js" defer></script>
+
+{% block scripts_extra %}{% endblock %}
+
+</body>
+</html>

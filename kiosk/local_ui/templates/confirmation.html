@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}GroundTruth — Complaint Recorded{% endblock %}
+
+{#
+  confirmation.html
+  ==================
+  Screen 3 of 3 — shown after the pipeline produces a ticket successfully.
+
+  Displays:
+    - Success icon + ticket_id
+    - Category badge + Department badge
+    - Urgency score bar (colour-coded low/mid/high)
+    - Evidence status badge with human-readable explanation
+      (implementation.md §4.7: "Verified with photo evidence" /
+       "Recorded — evidence pending" depending on evidence_status)
+    - 10-second idle-return countdown (auto-redirects to / after 10s)
+    - "Done" button for manual early return
+
+  Context variables expected from Kiosk Agent (FastAPI route):
+    ticket_id        : str   e.g. "GT-DEV-KIOSK-001-20260904-00001"
+    category         : str   e.g. "ROAD"
+    department_code  : str   e.g. "ROAD"
+    urgency_score    : float 0.0–1.0
+    evidence_status  : str   "verified"|"unavailable"|"no_asset_match"|"contested"
+    language         : str   "hi"|"mr"|"ta"
+    kiosk_id         : str   (from base.html context)
+#}
+
+{# ── Helper macros ──────────────────────────────────── #}
+
+{%- macro category_badge(cat) -%}
+  {%- set cls_map = {
+    'ROAD':        'road',
+    'WATER':       'water',
+    'ELECTRICITY': 'electricity',
+    'SANITATION':  'sanitation',
+    'STREETLIGHT': 'streetlight',
+    'OTHER':       'other'
+  } -%}
+  {%- set label_map = {
+    'ROAD':        'Road',
+    'WATER':       'Water',
+    'ELECTRICITY': 'Electricity',
+    'SANITATION':  'Sanitation',
+    'STREETLIGHT': 'Streetlight',
+    'OTHER':       'Other'
+  } -%}
+  <span class="badge badge--{{ cls_map.get(cat, 'other') }}"
+        aria-label="Category: {{ label_map.get(cat, cat) }}">
+    {{ label_map.get(cat, cat) }}
+  </span>
+{%- endmacro -%}
+
+{%- macro evidence_badge(status) -%}
+  {%- set cls_map = {
+    'verified':       'verified',
+    'unavailable':    'unavailable',
+    'no_asset_match': 'no-asset-match',
+    'contested':      'contested'
+  } -%}
+  {%- set label_map = {
+    'verified':       '✓ Verified with evidence',
+    'unavailable':    '⚠ Evidence pending',
+    'no_asset_match': '– Asset not matched',
+    'contested':      '! Under review'
+  } -%}
+  <span class="badge badge--{{ cls_map.get(status, 'unavailable') }}"
+        aria-label="Evidence status: {{ label_map.get(status, status) }}">
+    {{ label_map.get(status, status) }}
+  </span>
+{%- endmacro -%}
+
+{# Urgency colour: <0.4 = ok (green), 0.4-0.7 = warn (yellow), >0.7 = crit (red) #}
+{%- set urgency_css =
+  urgency_score > 0.7 and 'var(--clr-urgency-high)'
+  or urgency_score > 0.4 and 'var(--clr-urgency-mid)'
+  or 'var(--clr-urgency-low)'
+-%}
+{%- set urgency_pct = (urgency_score * 100) | round(0) | int -%}
+
+{%- set evidence_human = {
+  'verified':       'Your complaint has been verified with photo evidence and will be prioritised.',
+  'unavailable':    'Your complaint has been recorded. Photo evidence will be checked when available.',
+  'no_asset_match': 'Your complaint has been recorded. Our team will verify the asset details.',
+  'contested':      'Your complaint has been recorded and flagged for department review.'
+} -%}
+
+{% block content %}
+<div
+  class="card card--wide"
+  x-data="confirmation()"
+  x-init="startCountdown()"
+  role="region"
+  aria-labelledby="confirm-heading"
+>
+
+  <!-- ── Success hero ──────────────────────────────── -->
+  <div class="confirmation-hero">
+    <div class="confirmation-icon" aria-hidden="true">
+      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    </div>
+
+    <div>
+      <h1 class="card__title" id="confirm-heading" style="margin-bottom:var(--sp-1);">
+        Complaint Recorded
+      </h1>
+      <div class="flex items-center gap-2">
+        <span class="section-label" style="margin:0;">Ticket ID</span>
+        <span class="ticket-id selectable" aria-label="Ticket ID: {{ ticket_id }}">
+          {{ ticket_id }}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Detail grid ───────────────────────────────── -->
+  <div class="detail-grid" role="list" aria-label="Complaint details">
+
+    <div class="detail-item" role="listitem">
+      <div class="detail-item__label">Category</div>
+      <div class="detail-item__value">
+        {{ category_badge(category) }}
+      </div>
+    </div>
+
+    <div class="detail-item" role="listitem">
+      <div class="detail-item__label">Department</div>
+      <div class="detail-item__value">
+        <span class="font-mono" aria-label="Department code: {{ department_code }}">
+          {{ department_code }}
+        </span>
+      </div>
+    </div>
+
+    <div class="detail-item" role="listitem">
+      <div class="detail-item__label">Language</div>
+      <div class="detail-item__value">
+        {{ {'hi':'हिन्दी (Hindi)', 'mr':'मराठी (Marathi)', 'ta':'தமிழ் (Tamil)'}.get(language, language) }}
+      </div>
+    </div>
+
+    <div class="detail-item" role="listitem">
+      <div class="detail-item__label">Verification</div>
+      <div class="detail-item__value">
+        {{ evidence_badge(evidence_status) }}
+      </div>
+    </div>
+
+  </div>
+  <!-- /detail-grid -->
+
+  <!-- ── Urgency score bar ─────────────────────────── -->
+  <div class="urgency-bar-wrap" role="meter"
+       aria-label="Urgency score: {{ urgency_pct }}%"
+       aria-valuenow="{{ urgency_pct }}"
+       aria-valuemin="0"
+       aria-valuemax="100">
+    <div class="urgency-bar-label">
+      <span class="section-label" style="margin:0;">Urgency Score</span>
+      <span class="font-bold" style="color:{{ urgency_css }};">
+        {{ urgency_pct }}%
+      </span>
+    </div>
+    <div class="urgency-bar-track">
+      <div
+        class="urgency-bar-fill"
+        style="width: {{ urgency_pct }}%; --urgency-fill-clr: {{ urgency_css }};"
+      ></div>
+    </div>
+  </div>
+
+  <!-- ── Evidence explanation ──────────────────────── -->
+  <div
+    class="detail-item mb-6"
+    style="background:
+      {% if evidence_status == 'verified' %}rgba(63,185,80,0.07)
+      {% elif evidence_status == 'contested' %}rgba(248,81,73,0.07)
+      {% else %}var(--clr-bg-700)
+      {% endif %};"
+    role="note"
+    aria-label="Evidence explanation"
+  >
+    <div class="detail-item__label">What this means</div>
+    <p class="detail-item__value" style="font-size:var(--text-base);font-weight:var(--fw-normal);line-height:var(--lh-base);">
+      {{ evidence_human.get(evidence_status, 'Your complaint has been recorded.') }}
+    </p>
+  </div>
+
+  <!-- ── Actions ───────────────────────────────────── -->
+  <div class="flex flex-col items-center gap-4 w-full">
+
+    <!-- Primary CTA: Done (auto-triggers after countdown) -->
+    <a
+      href="/"
+      id="done-btn"
+      class="btn btn--primary btn--block"
+      aria-label="Done — return to home screen"
+      @click="cancelCountdown()"
+    >
+      Done
+    </a>
+
+    <!-- Idle-return countdown bar -->
+    <div class="w-full" aria-hidden="true">
+      <div class="flex items-center justify-between mb-4"
+           style="font-size:var(--text-xs);color:var(--clr-text-muted);">
+        <span>Returning to home in</span>
+        <span
+          class="font-mono"
+          x-text="`${countdown}s`"
+          aria-live="polite"
+          aria-label="Returning to home screen"
+        ></span>
+      </div>
+      <div class="idle-bar-track">
+        <div
+          class="idle-bar-fill"
+          :style="`animation-duration: ${totalCountdown}s`"
+          x-ref="idleBar"
+        ></div>
+      </div>
+    </div>
+
+  </div>
+  <!-- /actions -->
+
+</div>
+{# /card #}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+  /**
+   * confirmation() — Alpine.js component for the confirmation screen.
+   *
+   * Counts down from 10 seconds and redirects to / (language select / idle).
+   * Cancelled if the resident taps "Done" early.
+   */
+  function confirmation() {
+    return {
+      totalCountdown: 10,
+      countdown: 10,
+      _timer: null,
+
+      startCountdown() {
+        this._timer = setInterval(() => {
+          this.countdown -= 1;
+          if (this.countdown <= 0) {
+            clearInterval(this._timer);
+            window.location.href = '/';
+          }
+        }, 1000);
+      },
+
+      cancelCountdown() {
+        if (this._timer) {
+          clearInterval(this._timer);
+          this._timer = null;
+        }
+      },
+    };
+  }
+</script>
+{% endblock %}
