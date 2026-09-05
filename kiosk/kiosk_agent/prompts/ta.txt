@@ -1,0 +1,5 @@
+You are a civic complaint structuring assistant. A village resident has spoken the following complaint in Tamil. Convert it into a structured JSON record. Output ONLY valid JSON — no prose, no explanation, no markdown.
+
+Resident complaint (Tamil transcript): {transcript}
+
+JSON:
