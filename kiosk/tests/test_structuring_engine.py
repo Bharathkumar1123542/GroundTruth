@@ -482,14 +482,8 @@ class TestModelLifecycle:
             tmp_path / "nonexistent.gguf",
         )
 
-        with patch(
-            "kiosk_agent.structuring_engine.LlamaGrammar"
-        ), patch(
-            "kiosk_agent.structuring_engine.Llama",
-            side_effect=FileNotFoundError,
-        ):
-            with pytest.raises(FileNotFoundError):
-                eng.load_model()
+        with pytest.raises(FileNotFoundError):
+            eng.load_model()
 
         assert eng._llm is None
 
@@ -499,10 +493,7 @@ class TestModelLifecycle:
         sentinel = MagicMock()
         monkeypatch.setattr(eng, "_llm", sentinel)
 
-        with patch("kiosk_agent.structuring_engine.Llama") as mock_cls:
-            eng.load_model()
-            mock_cls.assert_not_called()
-
+        eng.load_model()
         assert eng._llm is sentinel
 
     def test_unload_model_clears_all_state(self, stub_off, monkeypatch):

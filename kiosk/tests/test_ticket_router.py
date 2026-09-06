@@ -87,10 +87,12 @@ def _complaint(category: Category = Category.ROAD) -> StructuredComplaint:
 
 def _verification(
     asset_id: str | None = "ROAD-SEG-001",
-    confidence: float = 0.80,
+    confidence: float | None = 0.80,
     evidence_status: EvidenceStatus = EvidenceStatus.VERIFIED,
     dept: DepartmentCode = DepartmentCode.ROAD,
 ) -> VerificationResult:
+    if evidence_status not in (EvidenceStatus.VERIFIED, EvidenceStatus.CONTESTED):
+        confidence = None
     return VerificationResult(
         asset_id=asset_id,
         department_code=dept,
@@ -105,12 +107,12 @@ def _verification(
 @pytest.fixture()
 def seeded_db(tmp_path, monkeypatch):
     """Fresh SQLite DB with schema, redirected for all kiosk_agent modules."""
+    from kiosk_agent.config import settings
     from kiosk_agent.db import init_db
 
     db_path = tmp_path / "test.db"
-    monkeypatch.setattr("kiosk_agent.db.settings.db_path", db_path)
-    monkeypatch.setattr("kiosk_agent.ticket_router.settings.db_path", db_path)
-    monkeypatch.setattr("kiosk_agent.ticket_router.settings.kiosk_id", "TEST-KIOSK")
+    monkeypatch.setattr(settings, "db_path", db_path)
+    monkeypatch.setattr(settings, "kiosk_id", "TEST-KIOSK")
     init_db()
     return db_path
 
@@ -129,12 +131,12 @@ def _insert_ticket(
     db.execute(
         text("""
             INSERT OR REPLACE INTO tickets
-              (ticket_id, kiosk_id, created_at, language, category,
-               department_code, evidence_status, urgency_score, status,
-               sync_attempts, asset_id)
+              (ticket_id, kiosk_id, created_at, language, raw_transcript,
+               structured_complaint, category, department_code, evidence_status,
+               urgency_score, status, sync_attempts, asset_id)
             VALUES
-              (:tid, :kid, :cat, 'hi', 'ROAD',
-               'ROAD', 'verified', 0.7, :status, 0, :aid)
+              (:tid, :kid, :cat, 'hi', 'raw transcript',
+               '{}', 'ROAD', 'ROAD', 'verified', 0.7, :status, 0, :aid)
         """),
         {
             "tid": ticket_id, "kid": kiosk_id,
@@ -488,13 +490,12 @@ class TestRoute:
         from kiosk_agent.ticket_router import route
         from kiosk_agent.db import db_session
         from kiosk_agent.db import TicketRow
-        from sqlalchemy import select
 
         ver = _verification(dept=DepartmentCode.WATER)  # overridden dept
-        route(_complaint(category=Category.ROAD), ver, "t", "hi")
+        res = route(_complaint(category=Category.ROAD), ver, "t", "hi")
 
         with db_session() as db:
-            row = db.execute(select(TicketRow)).scalars().first()
+            row = db.get(TicketRow, res.ticket_id)
         # VerificationResult dept (WATER) takes precedence over ROAD's default.
         assert row.department_code == DepartmentCode.WATER.value
 
@@ -517,13 +518,12 @@ class TestRoute:
         from kiosk_agent.ticket_router import route
         from kiosk_agent.db import db_session
         from kiosk_agent.db import TicketRow
-        from sqlalchemy import select
 
         transcript = "सड़क पर गड्ढा है।"
-        route(_complaint(), _verification(), transcript, "hi")
+        res = route(_complaint(), _verification(), transcript, "hi")
 
         with db_session() as db:
-            row = db.execute(select(TicketRow)).scalars().first()
+            row = db.get(TicketRow, res.ticket_id)
         assert row.raw_transcript == transcript
 
     def test_route_no_asset_match_sets_correct_status(self, seeded_db):
@@ -531,16 +531,15 @@ class TestRoute:
         from kiosk_agent.ticket_router import route
         from kiosk_agent.db import db_session
         from kiosk_agent.db import TicketRow
-        from sqlalchemy import select
 
         ver = _verification(
             asset_id=None,
-            confidence=0.0,
+            confidence=None,
             evidence_status=EvidenceStatus.NO_ASSET_MATCH,
         )
-        route(_complaint(), ver, "t", "hi")
+        res = route(_complaint(), ver, "t", "hi")
 
         with db_session() as db:
-            row = db.execute(select(TicketRow)).scalars().first()
+            row = db.get(TicketRow, res.ticket_id)
         assert row.evidence_status == EvidenceStatus.NO_ASSET_MATCH.value
         assert row.asset_id is None

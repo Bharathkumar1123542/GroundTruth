@@ -32,6 +32,7 @@ import logging
 import struct
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import cast
 
 from kiosk_agent.config import settings
@@ -126,13 +127,15 @@ def load_model() -> None:
         return
 
     model_path = str(settings.asr_model_path.resolve())
+    if not Path(model_path).exists():
+        raise FileNotFoundError(
+            f"ASR model binary not found at {model_path}. "
+            "Run scripts/fetch_models.sh or set ASR_MODEL_PATH."
+        )
     logger.info("Loading ASR model from %s …", model_path)
     t0 = time.perf_counter()
 
     try:
-        # pywhispercpp.Model wraps whisper.cpp and exposes a .transcribe() method.
-        # Import is deferred to here so the module can be imported even when
-        # pywhispercpp is not installed (test environments with mocked engines).
         from pywhispercpp.model import Model  # noqa: PLC0415
 
         _model = Model(

@@ -49,6 +49,14 @@ class KioskSettings(BaseSettings):
         default='{"type":"Polygon","coordinates":[[[73.85,18.51],[73.86,18.51],[73.86,18.52],[73.85,18.52],[73.85,18.51]]]}',
         description="GeoJSON Polygon (WGS84) bounding the kiosk's service area.",
     )
+    geofence_centroid_lat: float = Field(
+        default=18.515,
+        description="Latitude centroid of the kiosk geofence.",
+    )
+    geofence_centroid_lon: float = Field(
+        default=73.855,
+        description="Longitude centroid of the kiosk geofence.",
+    )
 
     # ------------------------------------------------------------------
     # Sync / Gateway (architecture.md §4.7, §12.2)

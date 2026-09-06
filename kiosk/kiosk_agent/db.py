@@ -133,6 +133,7 @@ class TicketRow(Base):
     evidence_status:         Mapped[str]         = mapped_column(sa.Text, nullable=False)
     urgency_score:           Mapped[float]       = mapped_column(sa.Float, nullable=False)
     status:                  Mapped[str]         = mapped_column(sa.Text, nullable=False, default="QUEUED")
+    audio_path:              Mapped[str | None]  = mapped_column(sa.Text, nullable=True)
     sync_attempts:           Mapped[int]         = mapped_column(sa.Integer, nullable=False, default=0)
     last_sync_attempt:       Mapped[str | None]  = mapped_column(sa.Text, nullable=True)
 
@@ -269,6 +270,18 @@ def db_session() -> Generator[Session, None, None]:
 # Schema initialisation
 # ---------------------------------------------------------------------------
 
+def reset_engine() -> None:
+    """Reset the module-level engine and sessionmaker singletons (used in tests)."""
+    global _engine, _SessionLocal
+    if _engine is not None:
+        try:
+            _engine.dispose()
+        except Exception:
+            pass
+    _engine = None
+    _SessionLocal = None
+
+
 def init_db() -> None:
     """
     Create all tables if they do not already exist.
@@ -276,6 +289,7 @@ def init_db() -> None:
     Safe to call multiple times — CREATE TABLE IF NOT EXISTS semantics via
     SQLAlchemy's checkfirst=True.
     """
+    reset_engine()
     engine = get_engine()
     Base.metadata.create_all(engine, checkfirst=True)
     logger.info("Database schema initialised (WAL mode active).")
@@ -302,6 +316,7 @@ def next_ticket_seq(session: Session, kiosk_id: str) -> int:
         session.add(row)
     else:
         row.seq += 1
+    session.flush()
     return row.seq
 
 

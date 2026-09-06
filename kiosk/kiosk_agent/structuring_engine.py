@@ -156,6 +156,10 @@ def load_model() -> None:
 
     # --- Load GGUF model ---
     model_path = str(settings.llm_model_path.resolve())
+    if not Path(model_path).exists():
+        raise FileNotFoundError(
+            f"Structuring Engine model binary not found at {model_path}."
+        )
     logger.info("Loading Structuring Engine model from %s …", model_path)
     t0 = time.perf_counter()
 
