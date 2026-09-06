@@ -255,33 +255,33 @@ def route(
     """
     kiosk_id = settings.kiosk_id
 
-    # ── Duplicate check ───────────────────────────────────────────────────
-    is_dup = _is_duplicate(verification.asset_id, kiosk_id)
-
-    # ── Urgency score ─────────────────────────────────────────────────────
-    urgency_score = compute_urgency_score(
-        complaint=complaint,
-        verification=verification,
-        is_duplicate=is_dup,
-    )
-    logger.info(
-        "Urgency score: %.4f  (category=%s  verified=%s  duplicate=%s)",
-        urgency_score,
-        complaint.category.value,
-        verification.evidence_status == EvidenceStatus.VERIFIED,
-        is_dup,
-    )
-
-    # ── Determine department_code ─────────────────────────────────────────
-    dept_code: DepartmentCode = (
-        verification.department_code
-        or CATEGORY_TO_DEPARTMENT.get(complaint.category, DepartmentCode.OTHER)
-    )
-
-    # ── Persist ticket ────────────────────────────────────────────────────
-    created_at = datetime.now(UTC).isoformat()
-
     try:
+        # ── Duplicate check ───────────────────────────────────────────────────
+        is_dup = _is_duplicate(verification.asset_id, kiosk_id)
+
+        # ── Urgency score ─────────────────────────────────────────────────────
+        urgency_score = compute_urgency_score(
+            complaint=complaint,
+            verification=verification,
+            is_duplicate=is_dup,
+        )
+        logger.info(
+            "Urgency score: %.4f  (category=%s  verified=%s  duplicate=%s)",
+            urgency_score,
+            complaint.category.value,
+            verification.evidence_status == EvidenceStatus.VERIFIED,
+            is_dup,
+        )
+
+        # ── Determine department_code ─────────────────────────────────────────
+        dept_code: DepartmentCode = (
+            verification.department_code
+            or CATEGORY_TO_DEPARTMENT.get(complaint.category, DepartmentCode.GEN)
+        )
+
+        # ── Persist ticket ────────────────────────────────────────────────────
+        created_at = datetime.now(UTC).isoformat()
+
         with db_session() as db:
             ticket_id = _generate_ticket_id(db, kiosk_id)
 

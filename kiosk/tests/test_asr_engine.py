@@ -328,7 +328,6 @@ class TestModelLifecycle:
     ):
         """load_model() must raise FileNotFoundError when the model binary is absent."""
         import kiosk_agent.asr_engine as eng
-        from pathlib import Path
 
         # Point to a non-existent file.
         monkeypatch.setattr(
@@ -336,10 +335,8 @@ class TestModelLifecycle:
             tmp_path / "nonexistent.bin",
         )
 
-        # Patch the import inside load_model to raise FileNotFoundError.
-        with patch("kiosk_agent.asr_engine.Model", side_effect=FileNotFoundError):
-            with pytest.raises(FileNotFoundError):
-                eng.load_model()
+        with pytest.raises(FileNotFoundError):
+            eng.load_model()
 
         assert eng._model is None  # model must not be set on failure
 
@@ -352,12 +349,7 @@ class TestModelLifecycle:
         sentinel = MagicMock()
         monkeypatch.setattr(eng, "_model", sentinel)
 
-        # If load_model tries to re-load, it would call Model() again.
-        # We verify _model remains the sentinel.
-        with patch("kiosk_agent.asr_engine.Model") as mock_cls:
-            eng.load_model()
-            mock_cls.assert_not_called()
-
+        eng.load_model()
         assert eng._model is sentinel
 
     def test_unload_model_clears_state(self, real_settings, monkeypatch):

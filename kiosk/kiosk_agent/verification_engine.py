@@ -342,7 +342,7 @@ def verify(complaint: StructuredComplaint) -> VerificationResult:
             department_code=_category_to_dept(complaint),
             location_lat=settings.geofence_centroid_lat,
             location_lon=settings.geofence_centroid_lon,
-            verification_confidence=0.0,
+            verification_confidence=None,
             evidence_status=EvidenceStatus.NO_ASSET_MATCH,
             evidence_image_path=None,
         )
@@ -360,7 +360,7 @@ def verify(complaint: StructuredComplaint) -> VerificationResult:
             department_code=dept_code,
             location_lat=asset.centroid_lat,
             location_lon=asset.centroid_lon,
-            verification_confidence=0.0,
+            verification_confidence=None,
             evidence_status=EvidenceStatus.UNAVAILABLE,
             evidence_image_path=None,
         )
@@ -394,16 +394,18 @@ def verify(complaint: StructuredComplaint) -> VerificationResult:
     if change_score >= threshold:
         evidence_status = EvidenceStatus.VERIFIED
         evidence_image_path = imagery.after_path
+        confidence = round(change_score, 4)
     else:
         evidence_status = EvidenceStatus.UNAVAILABLE
         evidence_image_path = None
+        confidence = None
 
     return VerificationResult(
         asset_id=asset.asset_id,
         department_code=dept_code,
         location_lat=asset.centroid_lat,
         location_lon=asset.centroid_lon,
-        verification_confidence=round(change_score, 4),
+        verification_confidence=confidence,
         evidence_status=evidence_status,
         evidence_image_path=evidence_image_path,
     )
@@ -416,7 +418,7 @@ def verify(complaint: StructuredComplaint) -> VerificationResult:
 def _category_to_dept(complaint: StructuredComplaint) -> DepartmentCode:
     """Map complaint category to a DepartmentCode (fallback if no asset found)."""
     from kiosk_agent.schemas import CATEGORY_TO_DEPARTMENT  # noqa: PLC0415
-    return CATEGORY_TO_DEPARTMENT.get(complaint.category, DepartmentCode.OTHER)
+    return CATEGORY_TO_DEPARTMENT.get(complaint.category, DepartmentCode.GEN)
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +455,7 @@ def _stub_verify(complaint: StructuredComplaint) -> VerificationResult:
         department_code=dept_code,
         location_lat=settings.geofence_centroid_lat,
         location_lon=settings.geofence_centroid_lon,
-        verification_confidence=0.0,
+        verification_confidence=None,
         evidence_status=EvidenceStatus.UNAVAILABLE,
         evidence_image_path=None,
     )

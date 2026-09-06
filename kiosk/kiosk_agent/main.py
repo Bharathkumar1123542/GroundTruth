@@ -44,6 +44,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from kiosk_agent import orchestrator
 from kiosk_agent.config import settings
 from kiosk_agent.db import (
     AssetRegistryRow,
@@ -103,7 +104,7 @@ _sessions: dict[str, dict] = {}  # session_id → {language, created_at, status}
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """
-    Startup: initialise DB, pre-load engine modules (stubs in Phase 1).
+    Startup: initialise DB, pre-load engine models.
     Shutdown: flush logs.
     """
     logger.info("Kiosk Agent starting — KIOSK_ID=%s", settings.kiosk_id)
@@ -111,13 +112,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialise SQLite schema (idempotent).
     init_db()
 
-    # Engine pre-load will happen here in Phases 2–5.
-    # For now, log stub mode if active.
-    if settings.stub_structuring:
-        logger.warning(
-            "STUB_STRUCTURING=true — structuring engine is mocked. "
-            "Set STUB_STRUCTURING=false and provide the GGUF model for production."
-        )
+    # Pre-load all ML models (ASR, Structuring, Verification)
+    try:
+        orchestrator.load_all_models()
+    except Exception as exc:
+        logger.error("Failed to load ML models during startup: %s", exc)
 
     yield  # application runs
 
@@ -266,11 +265,7 @@ async def finalize_complaint(
     audio_data: UploadFile | None = File(default=None),
 ) -> Response:
     """
-    Drives the complaint pipeline for a session.
-
-    Phase 1 (current): returns a stub FinalizeResponse when STUB_STRUCTURING=true.
-    Phase 6 (orchestrator.py): this body is replaced by a call to
-      orchestrator.run_pipeline(session_id, audio_bytes, language).
+    Drives the complaint pipeline for a session using orchestrator.run_pipeline().
 
     architecture.md §12.1:
       POST /v1/complaints/{session_id}/finalize →
@@ -285,7 +280,7 @@ async def finalize_complaint(
         )
         return JSONResponse(status_code=404, content=err.model_dump())
 
-    # Read audio bytes (will be passed to ASR engine in Phase 2).
+    # Read audio bytes (passed to orchestrator / ASR).
     audio_bytes: bytes = b""
     if audio_data:
         audio_bytes = await audio_data.read()
@@ -296,102 +291,35 @@ async def finalize_complaint(
     else:
         logger.warning("No audio_data in finalize request for session=%s", session_id)
 
-    # ── STUB PATH (Phase 1) ───────────────────────────────────────────────
-    # Returns a deterministic stub ticket so the full UI flow is exercisable
-    # before the ML engines are implemented.
-    if settings.stub_structuring:
-        ticket_id, finalize_resp = _stub_pipeline(session_id, language)
+    try:
+        finalize_resp = orchestrator.run_pipeline(
+            session_id=session_id,
+            audio_bytes=audio_bytes,
+            language=language,
+        )
         _sessions.pop(session_id, None)  # clean up session
 
         return Response(
             content=finalize_resp.model_dump_json(),
             status_code=200,
             media_type="application/json",
-            headers={"HX-Redirect": f"/confirmation/{ticket_id}"},
+            headers={"HX-Redirect": f"/confirmation/{finalize_resp.ticket_id}"},
         )
-
-    # ── REAL PIPELINE (Phase 6, orchestrator.py) ─────────────────────────
-    # This block will be replaced in Phase 6. For now, raise to signal that
-    # the real engine modules have not been wired yet.
-    err = ErrorResponse(
-        error_code="PIPELINE_NOT_READY",
-        message="ML engines not yet loaded. Set STUB_STRUCTURING=true for demo.",
-        retry_allowed=False,
-    )
-    return JSONResponse(status_code=503, content=err.model_dump())
-
-
-def _stub_pipeline(session_id: str, language: str) -> tuple[str, FinalizeResponse]:
-    """
-    Returns a hardcoded but schema-conformant stub ticket.
-    Persists the ticket to the local SQLite queue so confirmation.html can
-    retrieve it and downstream sync tests can assert queue state.
-
-    Removed in Phase 6 when orchestrator.run_pipeline() takes over.
-    """
-    structured = StructuredComplaint(
-        category=Category.ROAD,
-        subcategory="Pothole",
-        description="Large pothole on the main road near the community centre causing vehicle damage.",
-        location_hint="Near community centre, main road",
-        reported_asset_type="road_segment",
-        urgency_keywords=["pothole", "damage", "vehicle"],
-        structuring_confidence=0.91,
-    )
-    department_code = CATEGORY_TO_DEPARTMENT[structured.category]
-    verification = VerificationResult(
-        asset_id="ROAD-SEG-DEMO-001",
-        department_code=department_code,
-        location_lat=18.515,
-        location_lon=73.855,
-        verification_confidence=0.82,
-        evidence_status=EvidenceStatus.VERIFIED,
-        evidence_image_path=None,
-    )
-    urgency_score = round(
-        0.40 * (verification.verification_confidence or 0.5)
-        + 0.20 * 0.5   # recency_weight neutral
-        + 0.25 * 0.7   # ROAD category_weight
-        + 0.15 * 0.0,  # duplicate_weight zero (first ticket)
-        4,
-    )
-
-    today = datetime.now(UTC).strftime("%Y%m%d")
-
-    with db_session() as db:
-        seq = next_ticket_seq(db, settings.kiosk_id)
-        ticket_id = f"GT-{settings.kiosk_id}-{today}-{seq:05d}"
-
-        row = TicketRow(
-            ticket_id=ticket_id,
-            kiosk_id=settings.kiosk_id,
-            created_at=datetime.now(UTC).isoformat(),
-            language=language,
-            raw_transcript="[STUB] Large pothole on the main road near the community centre.",
-            structured_complaint=structured.model_dump_json(),
-            category=structured.category.value,
-            department_code=department_code.value,
-            asset_id=verification.asset_id,
-            location_lat=verification.location_lat,
-            location_lon=verification.location_lon,
-            evidence_image_path=verification.evidence_image_path,
-            evidence_image_hash=None,
-            verification_confidence=verification.verification_confidence,
-            evidence_status=verification.evidence_status.value,
-            urgency_score=urgency_score,
-            status=TicketStatus.QUEUED.value,
+    except orchestrator.PipelineExecutionError as exc:
+        logger.warning("Pipeline execution failed for session %s: %s", session_id, exc)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.to_error_response().model_dump(),
         )
-        db.add(row)
+    except Exception as exc:
+        logger.error("Unhandled error during pipeline finalize: %s", exc, exc_info=True)
+        err = ErrorResponse(
+            error_code="INTERNAL_ERROR",
+            message="An unexpected system error occurred. Please try again.",
+            retry_allowed=True,
+        )
+        return JSONResponse(status_code=500, content=err.model_dump())
 
-    logger.info("Stub ticket created: %s  urgency=%.4f", ticket_id, urgency_score)
-
-    return ticket_id, FinalizeResponse(
-        ticket_id=ticket_id,
-        category=structured.category,
-        department_code=department_code,
-        urgency_score=urgency_score,
-        evidence_status=verification.evidence_status,
-    )
 
 
 # ---------------------------------------------------------------------------

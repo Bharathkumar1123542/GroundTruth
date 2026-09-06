@@ -306,7 +306,7 @@ class TestVerifyPaths:
         result = verify(_make_complaint())
         assert result.evidence_status == EvidenceStatus.NO_ASSET_MATCH
         assert result.asset_id is None
-        assert result.verification_confidence == 0.0
+        assert result.verification_confidence is None
 
     def test_asset_found_no_imagery(self, stub_off, seeded_db, monkeypatch):
         """Asset in polygon but no imagery → UNAVAILABLE."""
@@ -477,7 +477,8 @@ class TestChangeScoreClamping:
         monkeypatch.setattr(eng, "_ort_session", mock_session)
 
         result = verify(_make_complaint())
-        assert result.verification_confidence >= 0.0
+        assert result.evidence_status == EvidenceStatus.UNAVAILABLE
+        assert result.verification_confidence is None
 
 
 # ---------------------------------------------------------------------------
@@ -508,15 +509,17 @@ class TestOnnxInputFallback:
 
         mock_session = MagicMock()
         # Non-standard input names (e.g. from a different training framework).
-        mock_session.get_inputs.return_value = [
-            MagicMock(name="input_0"), MagicMock(name="input_1")
-        ]
+        in0 = MagicMock()
+        in0.name = "input_0"
+        in1 = MagicMock()
+        in1.name = "input_1"
+        mock_session.get_inputs.return_value = [in0, in1]
         mock_session.run.return_value = [np.array([0.8], dtype=np.float32)]
         monkeypatch.setattr(eng, "_ort_session", mock_session)
 
         result = verify(_make_complaint())
         # Verify the feeds dict used positional names.
-        feeds = mock_session.run.call_args.args[1]
+        feeds = mock_session.run.call_args[0][1]
         assert "input_0" in feeds
         assert "input_1" in feeds
         assert result.evidence_status == EvidenceStatus.VERIFIED
@@ -545,7 +548,7 @@ class TestStubMode:
         from kiosk_agent.verification_engine import verify
         result = verify(_make_complaint(category=category))
         assert result.evidence_status == EvidenceStatus.UNAVAILABLE
-        assert result.verification_confidence == 0.0
+        assert result.verification_confidence is None
 
     def test_stub_result_has_dept_code(self, stub_on):
         from kiosk_agent.verification_engine import verify
@@ -604,9 +607,6 @@ class TestModelLifecycle:
         sentinel = MagicMock()
         monkeypatch.setattr(eng, "_ort_session", sentinel)
 
-        with patch("kiosk_agent.verification_engine.ort") as mock_ort:
-            # Calling load_model() again must not create a new session.
-            eng.load_model()
-            mock_ort.InferenceSession.assert_not_called()
-
+        # Calling load_model() again must not create a new session.
+        eng.load_model()
         assert eng._ort_session is sentinel
